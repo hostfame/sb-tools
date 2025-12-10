@@ -9,19 +9,18 @@ cat << 'EOF' > $SCRIPT
 #!/bin/bash
 
 ##########################################################
-# Universal Backup Transfer Script (Dynamic + Safe)
-# No setup needed — works on ANY server automatically
+# Universal Backup Transfer Script (Multi-Folder Safe)
+# Uploads ALL backup folders (YYYY-MM-DD) one-by-one
+# Deletes only after successful upload
 ##########################################################
 
-# Detect latest real backup folder (YYYY-MM-DD only)
-LATEST_BACKUP=$(basename $(ls -d /backup/20* 2>/dev/null | sort -r | head -n 1))
+# Detect all backup folder names matching /backup/YYYY-MM-DD
+BACKUP_FOLDERS=$(ls -d /backup/20* 2>/dev/null | sort)
 
-if [ -z "$LATEST_BACKUP" ]; then
-    echo "ERROR: No backup folder found matching /backup/20*"
+if [ -z "$BACKUP_FOLDERS" ]; then
+    echo "ERROR: No backup folders found in /backup"
     exit 1
 fi
-
-BACKUP_PATH="/backup/$LATEST_BACKUP"
 
 # Detect hostname
 HOST=$(hostname | cut -d. -f1)
@@ -39,35 +38,48 @@ declare -A MAP=(
 SERVER_BUCKET=${MAP[$HOST]}
 
 if [ -z "$SERVER_BUCKET" ]; then
-    echo "ERROR: This server hostname '$HOST' is not in bucket map."
-    echo "Add it inside MAP[] in this script."
+    echo "ERROR: Unknown hostname: $HOST"
     exit 1
 fi
 
 REMOTE="ImranBoss:$SERVER_BUCKET"
-LOG_FILE="/root/rclone-$LATEST_BACKUP.log"
 
 echo "==========================================="
-echo " Backup Folder: $BACKUP_PATH"
-echo " Upload Target: $REMOTE/$LATEST_BACKUP"
-echo " Log File:      $LOG_FILE"
+echo " Uploading All Backups for Server: $HOST"
+echo " Bucket: $REMOTE"
 echo "==========================================="
 
-# Upload and track progress
-rclone copy "$BACKUP_PATH" "$REMOTE/$LATEST_BACKUP" \
-  --progress --stats=10s --stats-one-line \
-  > "$LOG_FILE" 2>&1
+# Loop through each backup folder
+for FOLDER in $BACKUP_FOLDERS; do
+    NAME=$(basename "$FOLDER")
+    LOG_FILE="/root/rclone-$NAME.log"
 
-# Delete only after success
-if [ $? -eq 0 ]; then
-    echo "Upload SUCCESS. Deleting local backup..."
-    rm -rf "$BACKUP_PATH"
-    echo "Backup deleted successfully."
-else
-    echo "Upload FAILED. Backup NOT deleted."
-    echo "See log: $LOG_FILE"
-    exit 1
-fi
+    echo ""
+    echo "-------------------------------------------"
+    echo " Uploading Backup Folder: $FOLDER"
+    echo " Log File: $LOG_FILE"
+    echo "-------------------------------------------"
+
+    # Upload folder
+    rclone copy "$FOLDER" "$REMOTE/$NAME" \
+      --progress --stats=10s --stats-one-line \
+      > "$LOG_FILE" 2>&1
+
+    if [ $? -eq 0 ]; then
+        echo "SUCCESS: $NAME uploaded. Deleting folder..."
+        rm -rf "$FOLDER"
+    else
+        echo "FAILED: $NAME upload failed!"
+        echo "Backup NOT deleted. Check log: $LOG_FILE"
+        echo "Stopping further uploads to prevent data loss."
+        exit 1
+    fi
+done
+
+echo ""
+echo "==========================================="
+echo "All backups uploaded and deleted successfully!"
+echo "==========================================="
 
 EOF
 
